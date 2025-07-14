@@ -1,61 +1,62 @@
 import os
 import numpy as np
 import numpy.typing as npt
-from dataclasses import dataclass
 from typing import List, Tuple, NamedTuple
-from collections import namedtuple
 import math
 
 os.environ["OPENCV_IO_ENABLE_OPENEXR"]="1"
 import cv2
 
+from .utils import read_exr
+
 
 class PixelCoords(NamedTuple):
     X: int
     Y: int
-
-class MatchedPoints(NamedTuple):
-    Start: PixelCoords
-    End: PixelCoords
-
-    def to_vector(self, max_y, max_x) -> Tuple[float, float]:
-        return (
-            (self.End.Y - self.Start.Y) / max_y,
-            (self.End.X - self.Start.X) / max_x,
-        )
+    
+class MotionVector(NamedTuple):
+    Coords: PixelCoords
+    Vector: Tuple[float, float]
 
 class KeypointsData(NamedTuple):
     Keypoints: Tuple[cv2.KeyPoint]
     Descriptors: npt.NDArray[np.float32]
-    GrayscaleImg: npt.NDArray[np.uint8]
 
 
-class KeypointsApproach():
+class KeypointsAlgorithm():
     @staticmethod
-    def compute(
+    def compute_from_matrices(
         frame_1: npt.NDArray[np.float16], frame_2: npt.NDArray[np.float16], motion_vectors: npt.NDArray[np.float16]
     ) -> Tuple[float, float]:
+        THRESHOLD = 500
         
-        frame_keypoints_1 = KeypointsApproach.detect_keypoints(frame_1)
-        frame_keypoints_2 = KeypointsApproach.detect_keypoints(frame_2)
+        frame_keypoints_1 = KeypointsAlgorithm.detect_keypoints(frame_1)
+        frame_keypoints_2 = KeypointsAlgorithm.detect_keypoints(frame_2)
 
-        matched_points = KeypointsApproach.find_matches(frame_keypoints_1, frame_keypoints_2, 500)
-
-        scale_x, scale_y = KeypointsApproach.compute_scales(matched_points, motion_vectors)
+        custom_motion_vectors = KeypointsAlgorithm.find_matches(frame_keypoints_1, frame_keypoints_2, THRESHOLD)
+        scale_x, scale_y = KeypointsAlgorithm.compute_scales(custom_motion_vectors, motion_vectors)
         
         return scale_x, scale_y
     
     @staticmethod
+    def compute_from_files(frame_1: str, frame_2: str, motion_vectors: str) -> Tuple[float, float]:
+        return KeypointsAlgorithm.compute_from_matrices(
+            frame_1=read_exr(frame_1),
+            frame_2=read_exr(frame_2),
+            motion_vectors=read_exr(motion_vectors)
+        )
+    
+    @staticmethod
     def detect_keypoints(image: npt.NDArray[np.float16]) -> KeypointsData:
-        grayscale = KeypointsApproach.make_grayscale(image)
+        grayscale = KeypointsAlgorithm.make_grayscale(image)
 
         sift = cv2.SIFT_create()
         keypoints, descriptors = sift.detectAndCompute(grayscale, None)
 
-        return KeypointsData(keypoints, descriptors, grayscale)  
+        return KeypointsData(keypoints, descriptors)  
 
     @staticmethod
-    def find_matches(img_1: KeypointsData, img_2: KeypointsData, threshold: int) -> List[MatchedPoints]:
+    def find_matches(img_1: KeypointsData, img_2: KeypointsData, threshold: int) -> List[MotionVector]:
 
         matcher = cv2.BFMatcher()
         matches = matcher.knnMatch(img_1.Descriptors, img_2.Descriptors, k=2)
@@ -63,8 +64,8 @@ class KeypointsApproach():
         factor = 0.0
         good_matches = []
         while len(good_matches) < threshold and factor < 0.9:
-
             factor += 0.05
+
             for m, n in matches:
                 if m.distance > factor * n.distance:
                     continue
@@ -81,13 +82,16 @@ class KeypointsApproach():
 
                 if pt_1 == pt_2:
                     continue
-
-                good_matches.append(MatchedPoints(pt_1, pt_2))
+                
+                vector = (img_2.Keypoints[m.trainIdx].pt[0] - img_1.Keypoints[m.queryIdx].pt[0],
+                          img_2.Keypoints[m.trainIdx].pt[1] - img_1.Keypoints[m.queryIdx].pt[1])
+                
+                good_matches.append(MotionVector(Coords=pt_2, Vector=vector))
 
         if len(good_matches) < threshold:
             raise RuntimeError('could not find enough keypoints on two images')
         
-        print(f'factor: {factor}')
+        print(f'last factor: {factor}')
 
         return good_matches
 
@@ -95,7 +99,7 @@ class KeypointsApproach():
     def make_grayscale(img: npt.NDArray[np.float16]) -> npt.NDArray[np.uint8]:
         tone_mapping = cv2.createTonemapDrago(gamma=2.5, bias=0.85)
         tone_mapped_img = tone_mapping.process((img[:,:,:3]).astype(np.float32))
-        tone_mapped_img = KeypointsApproach._remove_nans(tone_mapped_img)
+        tone_mapped_img = KeypointsAlgorithm._remove_nans(tone_mapped_img)
         tone_mapped_img = (tone_mapped_img * 255).astype(np.uint8)
 
         grayscale = cv2.cvtColor(tone_mapped_img, cv2.COLOR_RGB2GRAY)
@@ -103,14 +107,16 @@ class KeypointsApproach():
         return grayscale
 
     @staticmethod
-    def compute_scales(matched_points: List[MatchedPoints], motion_vectors: npt.NDArray[np.float16], points_num: int = 10) -> Tuple[float, float]:
+    def compute_scales(
+        custom_motion_vectors: List[MotionVector], motion_vectors: npt.NDArray[np.float16], points_num: int = 10
+    ) -> Tuple[float, float]:
         height = motion_vectors.shape[0]
         width = motion_vectors.shape[1]
 
         vectors = zip(
-            [pt.to_vector(max_x=width, max_y=height) for pt in matched_points],
-            [motion_vectors[pt.End.Y, pt.End.X][:2] for pt in matched_points],
-            [pt for pt in matched_points] # for debug
+            [(v.Vector[1] / height, v.Vector[0] / width) for v in custom_motion_vectors],
+            [motion_vectors[v.Coords.Y, v.Coords.X][:2] for v in custom_motion_vectors],
+            # [pt for pt in matched_points] # for debug
         )
 
         vectors = sorted(vectors, reverse=True, key=lambda x: math.sqrt(x[1][0]**2 + x[1][1]**2))
@@ -130,9 +136,9 @@ class KeypointsApproach():
     @staticmethod
     def _remove_nans(image: npt.NDArray[np.float32]) -> npt.NDArray[np.float32]:
         nan_checks = np.isnan(image)
-        nan_pixels = np.argwhere(nan_checks == np.nan)
+        nan_pixels = np.argwhere(nan_checks)
 
-        for nan in nan_pixels:
-            image[nan[0], nan[1], nan[2]] = 0.0
+        for pixel in nan_pixels:
+            image[pixel[0], pixel[1], pixel[2]] = 0.0
 
         return image

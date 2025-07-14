@@ -6,8 +6,8 @@ from enum import IntEnum
 
 
 class MoveDirection(IntEnum):
-    From = -1
-    To = 1
+    Backward = -1
+    Forward = 1
 
 
 def read_exr(filepath: str, rotate: bool = False) -> npt.NDArray[np.float16]:
