@@ -1,5 +1,20 @@
 # Motion Vectors Scale computation
 
+## How to launch
+
+```
+usage: main.py [-h] -alg {keypoints,gradient descent} [-frame_1 FRAME_1]
+               [-frame_2 FRAME_2] [-mv MV]
+
+options:
+  -h, --help                        show this help message and exit
+  -alg {keypoints,gradient descent} Choose one of the following algorithms
+  -frame_1 FRAME_1                  File path for the first frame
+  -frame_2 FRAME_2                  File path for the second frame
+  -mv MV                            File path for img with motion vectors
+```
+
+
 ## Keypoints algorithm
 
 - Detect a set of keypoints in the first frame
@@ -12,9 +27,9 @@
 
 ### Example
 Take some files from the "example" folder
-- *frames\02013.exr* as the first frame
-- *frames\02014.exr* as the second frame
-- *motion_vectors\02014.exr* as thi image containing motion vectors
+- *"frames\02013.exr"* as the first frame
+- *"frames\02014.exr"* as the second frame
+- *"motion_vectors\02014.exr"* as thi image containing motion vectors
 
 Result
 - scale_x = 0.32345110177993774
