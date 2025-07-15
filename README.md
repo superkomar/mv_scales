@@ -2,6 +2,7 @@
 
 ## How to launch
 
+This is how to launch it locally
 ```
 usage: main.py [-h] -alg {keypoints,gradient descent} [-frame_1 FRAME_1]
                [-frame_2 FRAME_2] [-mv MV]
