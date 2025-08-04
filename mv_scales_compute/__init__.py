@@ -1,3 +1,4 @@
-from .keypoints import KeypointsAlgorithm
-from .gradient_descent import GradientDescentAlgorithm
+from .keypoints import KeypointsApproach
+from .gradient_descent import GradientDescentApproach
 from . import utils
+from .utils import ImageUtils
