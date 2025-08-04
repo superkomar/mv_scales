@@ -12,9 +12,9 @@ options:
   -alg {keypoints,gradient descent} Choose one of the following algorithms
   -frame_1 FRAME_1                  File path for the first frame
   -frame_2 FRAME_2                  File path for the second frame
-  -mv MV                            File path for img with motion vectors
+  -mv_1 MV                          File path for the first img with motion vectors
+  -mv_2 MV                          File path for the second img with motion vectors
 ```
-
 
 ## Keypoints algorithm
 
