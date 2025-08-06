@@ -99,16 +99,16 @@ if __name__ == '__main__':
             Scale_y=scale_y
         ))
 
-        # scale_x, scale_y = app.compute_from_motion_vectors(motion_vectors_1, motion_vectors_2)
+        scale_x, scale_y = app.compute_from_motion_vectors(motion_vectors_1, motion_vectors_2)
         
-        # results.append(AppResult(
-        #     Name='Keypoints (motion vectors)',
-        #     Scale_x=scale_x,
-        #     Scale_y=scale_y
-        # ))
+        results.append(AppResult(
+            Name='Keypoints (motion vectors)',
+            Scale_x=scale_x,
+            Scale_y=scale_y
+        ))
 
     if args.app == APPROACH_LIST[1] or args.app == APPROACH_LIST[2]:
-        app = GradientDescentApproach(steps_num=1000)
+        app = GradientDescentApproach()
 
         scale_x, scale_y = app.compute_from_frames(frame_1, frame_2, motion_vectors_2)
 
@@ -118,16 +118,13 @@ if __name__ == '__main__':
             Scale_y=scale_y
         ))
 
-        scale_x, scale_y = app.compute_from_motion_vectors_new(motion_vectors_1, motion_vectors_2)
+        scale_x, scale_y = app.compute_from_motion_vectors(motion_vectors_1, motion_vectors_2)
 
         results.append(AppResult(
             Name='Gradient descent (motion vectors)',
             Scale_x=scale_x,
             Scale_y=scale_y
         ))
-
-    naive_warp = ImageUtils.warp_image(frame_2, motion_vectors_2, is_moving_forward=False)
-    utils.write_exr(naive_warp, 'debug\\naive_warp.exr')
 
     for result in results:
         logger.info(result)

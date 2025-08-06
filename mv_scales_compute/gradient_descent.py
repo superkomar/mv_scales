@@ -5,6 +5,7 @@ import torch
 import torch.nn.functional as F
 import torch.nn.parameter as pr
 import logging
+import os
 
 from .utils import read_exr, write_exr, ImageUtils
 
@@ -13,64 +14,58 @@ class GradientDescentApproach():
     _DEFAULT_STEPS_NUM_ = 500
     _DEFAULT_LEARNING_RATE_ = 1e-3
 
-    def __init__(self,
-                 steps_num: int = _DEFAULT_STEPS_NUM_,
-                 learning_rate: float = _DEFAULT_LEARNING_RATE_,
-                 is_moving_backward: bool = True
+    def __init__(
+        self,
+        steps_num: int = _DEFAULT_STEPS_NUM_,
+        learning_rate: float = _DEFAULT_LEARNING_RATE_,
+        is_moving_backward: bool = True
     ) -> None:
+        
         self._steps_num = steps_num
         self._learning_rate = learning_rate
         self._is_moving_backward = is_moving_backward
 
         self.logger = logging.getLogger(__name__)
     
-    def compute_from_frames(self,
-        frame_1: npt.NDArray[np.float16], frame_2: npt.NDArray[np.float16], motion_vectors: npt.NDArray[np.float16]
+    def compute_from_frames(
+        self,
+        frame_1: npt.NDArray[np.float16],
+        frame_2: npt.NDArray[np.float16],
+        motion_vectors: npt.NDArray[np.float16]
     ) -> Tuple[float, float]:
         
-        self.logger.info(f'Gradient Descent (frames) has started')
+        if self._is_moving_backward:
+            source, target = frame_2, frame_1
+            motion_vectors = motion_vectors[..., :2] * (-1)
+        else:
+            source, target = frame_1, frame_2
+            motion_vectors = motion_vectors[..., :2]
 
-        move_sign = -1 if self._is_moving_backward else 1
-        motion_vectors = motion_vectors[..., :2] * move_sign
+        return self._compute_scales(source, target, motion_vectors)
+    
+    def compute_from_motion_vectors(
+        self,
+        mv_1: npt.NDArray[np.float16],
+        mv_2: npt.NDArray[np.float16]
+    ) -> Tuple[float, float]:
         
-        img_1_tensor = self._numpy_to_tensor(frame_1)
-        img_2_tensor = self._numpy_to_tensor(frame_2)
-        mv_tensor = self._mv_to_parameter(motion_vectors)
-
-        warped_img = self._run_gradient_descent(img_2_tensor, mv_tensor, img_1_tensor)
-
-        # Debug condition
-        if self.logger.getEffectiveLevel() == 10:
-            write_exr(frame_1, f'debug\\frame_1.exr')
-            write_exr(frame_2, f'debug\\frame_2.exr')
-            write_exr(motion_vectors, f'debug\\mv_original.exr')
-            write_exr(self._mv_to_numpy(mv_tensor), f'debug\\mv_final.exr')
-            write_exr(self._tensor_to_numpy(warped_img), f'debug\\warped_final.exr')
-
-        custom_motion_vectors = self._mv_to_numpy(mv_tensor)
-
-        scale_x, scale_y = self._calc_scales(custom=custom_motion_vectors, original=motion_vectors)
-
-        self.logger.info(f'Gradient Descent (frames) has ended')
-
-        return scale_x, scale_y
-    
-    
-    def compute_from_motion_vectors(self, mv_1: npt.NDArray[np.float16], mv_2: npt.NDArray[np.float16]) -> Tuple[float, float]:
         if self._is_moving_backward:
             source, target = mv_2, mv_1
-            motion_vectors = mv_2[..., :2] * -1
+            motion_vectors = mv_2[..., :2] * (-1)
         else:
             source, target = mv_1, mv_2
             motion_vectors = mv_1[..., :2]
         
-        return self._from_motion_vectors(source, target, motion_vectors)
-
+        return self._compute_scales(source, target, motion_vectors)
     
-    def _from_motion_vectors(
-        self, source: npt.NDArray[np.float32], target: npt.NDArray[np.float32], motion_vectors: npt.NDArray[np.float32]
+    def _compute_scales(
+        self,
+        source: npt.NDArray[np.float32],
+        target: npt.NDArray[np.float32],
+        motion_vectors: npt.NDArray[np.float32]
     ) -> Tuple[float, float]:
-        self.logger.info(f'Gradient Descent (motion vectors) has started')
+        
+        self.logger.info(f'Gradient Descent has started')
 
         source_tensor = self._numpy_to_tensor(source)
         target_tensor = self._numpy_to_tensor(target)
@@ -80,18 +75,20 @@ class GradientDescentApproach():
         warped_img = self._run_gradient_descent(source_tensor, mv_tensor, target_tensor)
 
         # Debug condition
-        if self.logger.getEffectiveLevel() == 10:  
-            write_exr(source, f'debug\\source.exr')
-            write_exr(target, f'debug\\target.exr')
-            write_exr(motion_vectors, f'debug\\mv_original.exr')
-            write_exr(self._mv_to_numpy(mv_tensor), f'debug\\mv_final.exr')
-            write_exr(self._tensor_to_numpy(warped_img), f'debug\\warped_final.exr')
+        if self.logger.getEffectiveLevel() == 10:
+            dir_name = 'debug'
+            os.makedirs('debug', exist_ok=True)
+            write_exr(source, os.path.join(dir_name, 'source.exr'))
+            write_exr(target, os.path.join(dir_name, 'target.exr'))
+            write_exr(motion_vectors, os.path.join(dir_name, 'mv_original.exr'))
+            write_exr(self._mv_to_numpy(mv_tensor), os.path.join(dir_name, 'mv_final.exr'))
+            write_exr(self._tensor_to_numpy(warped_img), os.path.join(dir_name, 'warped_final.exr'))
 
         custom_motion_vectors = self._mv_to_numpy(mv_tensor)
 
-        scale_x, scale_y = self._calc_scales(custom_motion_vectors, motion_vectors)
+        scale_x, scale_y = self._calc_motion_vectors_scales(custom_motion_vectors, motion_vectors)
         
-        self.logger.info(f'Gradient Descent (motion vectors) has ended')
+        self.logger.info(f'Gradient Descent has completed')
         
         return scale_x, scale_y
     
@@ -121,17 +118,10 @@ class GradientDescentApproach():
         return warped_input
     
     @staticmethod
-    def _get_base_grid(height: int, width: int) -> torch.Tensor:
-        yy, xx = torch.meshgrid(
-            torch.linspace(-1, 1, height),
-            torch.linspace(-1, 1, width),
-            indexing='ij'
-        )
-
-        return torch.stack((xx, yy), dim=-1).unsqueeze(0)
-
-    @staticmethod
-    def _calc_scales(custom: npt.NDArray[np.float32], original: npt.NDArray[np.float32]) -> Tuple[float, float]:
+    def _calc_motion_vectors_scales(
+        custom: npt.NDArray[np.float32],
+        original: npt.NDArray[np.float32]
+    ) -> Tuple[float, float]:
 
         custom_x = custom[..., 1]
         custom_y = custom[..., 0]
@@ -148,6 +138,16 @@ class GradientDescentApproach():
         scale_y = np.mean(custom_y[zero_mask_y] / original_y[zero_mask_y], dtype=np.float32)
 
         return scale_x, scale_y
+    
+    @staticmethod
+    def _get_base_grid(height: int, width: int) -> torch.Tensor:
+        yy, xx = torch.meshgrid(
+            torch.linspace(-1, 1, height),
+            torch.linspace(-1, 1, width),
+            indexing='ij'
+        )
+
+        return torch.stack((xx, yy), dim=-1).unsqueeze(0)
     
     @staticmethod
     def _numpy_to_tensor(img: npt.NDArray[np.float32]) -> torch.Tensor:
