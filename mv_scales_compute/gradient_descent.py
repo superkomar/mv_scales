@@ -12,7 +12,7 @@ from .utils import read_exr, write_exr, ImageUtils
 
 class GradientDescentApproach():
     _DEFAULT_STEPS_NUM_ = 500
-    _DEFAULT_LEARNING_RATE_ = 1e-3
+    _DEFAULT_LEARNING_RATE_ = 1e-1
 
     def __init__(
         self,
