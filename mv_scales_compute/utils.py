@@ -5,6 +5,9 @@ import numpy.typing as npt
 from enum import IntEnum
 from typing import Tuple
 
+os.environ["OPENCV_IO_ENABLE_OPENEXR"]="1"
+import cv2
+
 
 def read_exr(filepath: str, rotate: bool = False) -> npt.NDArray[np.float16]:
     if not os.path.isfile(filepath):
@@ -29,7 +32,7 @@ def read_exr(filepath: str, rotate: bool = False) -> npt.NDArray[np.float16]:
 
         return np.stack(channels_data, axis=-1) if len(channels_data) > 1 else channels_data[0]
     
-def write_exr(img: npt.NDArray[np.float16], file_path: str) -> None:
+def write_exr(img: npt.NDArray[np.float32], file_path: str) -> None:
     header = {
         "compression" : OpenEXR.ZIP_COMPRESSION,
         "type" : OpenEXR.scanlineimage
@@ -64,6 +67,29 @@ class ImageUtils:
 
         normalized = (image - min) / (max - min)
         return normalized
+    
+    @staticmethod
+    def make_8bit(image: npt.NDArray[np.float16]) -> npt.NDArray[np.uint8]:
+        min = image.min()
+        max = image.max()
+
+        norm_image = (image - min) / (max - min)
+        norm_image = (norm_image * 255.0)
+
+        image_8bit = np.sum(norm_image, axis=-1) / image.shape[-1]
+        
+        return image_8bit.astype(np.uint8)
+    
+    @staticmethod
+    def make_grayscale(img: npt.NDArray[np.float16]) -> npt.NDArray[np.uint8]:
+        tone_mapping = cv2.createTonemapDrago(gamma=2.5, bias=0.85)
+        tone_mapped_img = tone_mapping.process((img[:,:,:3]).astype(np.float32))
+        tone_mapped_img = ImageUtils.remove_nans(tone_mapped_img)
+        tone_mapped_img = (tone_mapped_img * 255).astype(np.uint8)
+
+        grayscale = cv2.cvtColor(tone_mapped_img, cv2.COLOR_RGB2GRAY)
+
+        return grayscale
     
     @staticmethod
     def linear_interpolation(coord: float) -> int:
@@ -113,6 +139,7 @@ class ImageUtils:
 
         return image
     
+    @staticmethod
     def warp_image(
             image: npt.NDArray[np.float16], flow: npt.NDArray[np.float16], is_moving_forward: bool = True
         ) -> npt.NDArray[np.float16]:
@@ -138,28 +165,6 @@ class ImageUtils:
         warped[flat_dst_y, flat_dst_x] = image[flat_src_y, flat_src_x]
         
         return warped
-    
-    @staticmethod
-    def make_8bit(image: npt.NDArray[np.float16]) -> npt.NDArray[np.float16]:
-        min = image.min()
-        max = image.max()
-
-        norm_image = (image - min) / (max - min)
-        norm_image = (norm_image * 255.0).astype(np.uint8)
-
-        if image.shape[2] == 2:
-            image_8bit = (
-                norm_image[..., 0] * 0.5 +
-                norm_image[..., 1] * 0.5
-            )
-        else:
-            image_8bit = (
-                norm_image[..., 0] * 0.33 +
-                norm_image[..., 1] * 0.33 + 
-                norm_image[..., 2] * 0.33
-            )
-        
-        return image_8bit.astype(np.uint8)
 
     @staticmethod
     def diff_images(

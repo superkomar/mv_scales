@@ -6,63 +6,72 @@ import torch.nn.functional as F
 import torch.nn.parameter as pr
 import logging
 import os
+from dataclasses import dataclass
 
 from .utils import read_exr, write_exr, ImageUtils
 
+@dataclass
+class ApproachParameters:
+    StepsNum = 1000
+    LearningRate = 1e1
+    IsMovingBackward = True
 
-class GradientDescentApproach():
-    _DEFAULT_STEPS_NUM_ = 500
-    _DEFAULT_LEARNING_RATE_ = 1e-1
 
-    def __init__(
-        self,
-        steps_num: int = _DEFAULT_STEPS_NUM_,
-        learning_rate: float = _DEFAULT_LEARNING_RATE_,
-        is_moving_backward: bool = True
-    ) -> None:
+class GradientDescentApproach:
+
+    def __init__(self, parameters: ApproachParameters = ApproachParameters()) -> None:
         
-        self._steps_num = steps_num
-        self._learning_rate = learning_rate
-        self._is_moving_backward = is_moving_backward
+        self._steps_num = parameters.StepsNum
+        self._learning_rate = parameters.LearningRate
+        self._is_moving_backward = parameters.IsMovingBackward
 
         self.logger = logging.getLogger(__name__)
-    
-    def compute_from_frames(
-        self,
-        frame_1: npt.NDArray[np.float16],
-        frame_2: npt.NDArray[np.float16],
-        motion_vectors: npt.NDArray[np.float16]
+        self._is_debug = self.logger.getEffectiveLevel() == 10
+
+        self._torch_device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+
+    def from_motion_vectors(
+            self, motion_vectors_1: npt.NDArray[np.float16], motion_vectors_2: npt.NDArray[np.float16]
     ) -> Tuple[float, float]:
+        
+        if motion_vectors_1 is None or motion_vectors_2 is None:
+            raise RuntimeError('One of the argument is None')
+
+        if self._is_moving_backward:
+            source, target = motion_vectors_2, motion_vectors_1
+            motion_vectors = motion_vectors_2[..., :2] * (-1)
+
+            self.logger.debug('from "motion_vectors_2" to "motion_vectors_1"')
+        else:
+            source, target = motion_vectors_1, motion_vectors_2
+            motion_vectors = motion_vectors_1[..., :2]
+
+            self.logger.debug('from "motion_vectors_1" to "motion_vectors_2"')
+
+        return self._compute_scales(source=source, target=target, motion_vectors=motion_vectors)
+    
+    def from_frames(
+        self, frame_1: npt.NDArray[np.float16], frame_2: npt.NDArray[np.float16], motion_vectors: npt.NDArray[np.float16]
+    ) -> Tuple[float, float]:
+        
+        if frame_1 is None or frame_2 is None or motion_vectors is None:
+            raise RuntimeError('One of the argument is None')
         
         if self._is_moving_backward:
             source, target = frame_2, frame_1
             motion_vectors = motion_vectors[..., :2] * (-1)
+            
+            self.logger.debug('from "frame_2" to "frame_1"')
         else:
             source, target = frame_1, frame_2
             motion_vectors = motion_vectors[..., :2]
 
-        return self._compute_scales(source, target, motion_vectors)
-    
-    def compute_from_motion_vectors(
-        self,
-        mv_1: npt.NDArray[np.float16],
-        mv_2: npt.NDArray[np.float16]
-    ) -> Tuple[float, float]:
-        
-        if self._is_moving_backward:
-            source, target = mv_2, mv_1
-            motion_vectors = mv_2[..., :2] * (-1)
-        else:
-            source, target = mv_1, mv_2
-            motion_vectors = mv_1[..., :2]
-        
-        return self._compute_scales(source, target, motion_vectors)
-    
+            self.logger.debug('from "frame_1" to "frame_2"')
+
+        return self._compute_scales(source=source, target=target, motion_vectors=motion_vectors)
+
     def _compute_scales(
-        self,
-        source: npt.NDArray[np.float32],
-        target: npt.NDArray[np.float32],
-        motion_vectors: npt.NDArray[np.float32]
+        self, source: npt.NDArray[np.float32], target: npt.NDArray[np.float32], motion_vectors: npt.NDArray[np.float32]
     ) -> Tuple[float, float]:
         
         self.logger.info(f'Gradient Descent has started')
@@ -72,10 +81,21 @@ class GradientDescentApproach():
         
         mv_tensor = self._mv_to_parameter(motion_vectors)
 
-        warped_img = self._run_gradient_descent(source_tensor, mv_tensor, target_tensor)
+        # pr.Parameter(torch.from_numpy(mv.astype(np.float32)).unsqueeze(0).contiguous().clone().detach())
+        # yy, xx = torch.meshgrid(
+        #     torch.linspace(0, 1, source.shape[0]),
+        #     torch.linspace(0, 1, source.shape[1]),
+        #     indexing='ij'
+        # )
+        # mv_tensor = pr.Parameter(
+        #     torch.rand((source.shape[0], source.shape[1], 2))
+        #     .unsqueeze(0).contiguous().clone().detach()
+        # )
+
+        warped_img = self._run_gradient_descent(input=source_tensor, motion_vectors=mv_tensor, target=target_tensor)
 
         # Debug condition
-        if self.logger.getEffectiveLevel() == 10:
+        if self._is_debug:
             dir_name = 'debug'
             os.makedirs('debug', exist_ok=True)
             write_exr(source, os.path.join(dir_name, 'source.exr'))
@@ -96,13 +116,22 @@ class GradientDescentApproach():
         height = input.shape[2]
         width = input.shape[3]
 
-        base_grid = self._get_base_grid(height, width)
-        optimizer = torch.optim.SGD([motion_vectors], lr=self._learning_rate)
+        input = input.to(self._torch_device)
+        target = target.to(self._torch_device)
+        motion_vectors = motion_vectors.to(self._torch_device)
+        base_grid = self._get_base_grid(height, width).to(self._torch_device)
+        optimizer = torch.optim.SGD([motion_vectors], lr=self._learning_rate, momentum=0.9)
+
+        self.logger.debug(f'{input.device=}')
+        self.logger.debug(f'{target.device=}')
+        self.logger.debug(f'{motion_vectors.device=}')
+        self.logger.debug(f'{base_grid.device=}')
 
         for step in range(self._steps_num):
             optimizer.zero_grad()
 
             motion_grid = base_grid + motion_vectors
+            # motion_grid = motion_vectors
 
             # input [1, C, H, W]; grid [1, H, W, 2]
             warped_input = F.grid_sample(input, motion_grid, mode='bilinear', padding_mode="zeros", align_corners=True)
@@ -113,7 +142,7 @@ class GradientDescentApproach():
             optimizer.step()
 
             if step % 100 == 0:
-                self.logger.debug(f'Step {step}: loss = {loss.item():.6f}')
+                self.logger.debug(f'Step {step}: loss = {loss.item():.8f}')
 
         return warped_input
     
