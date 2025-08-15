@@ -12,9 +12,9 @@ from .utils import read_exr, write_exr, ImageUtils
 
 @dataclass
 class ApproachParameters:
-    StepsNum = 1000
-    LearningRate = 1e1
-    IsMovingBackward = True
+    StepsNum: int = 1000
+    LearningRate: float = 1e1
+    IsMovingBackward: bool = True
 
 
 class GradientDescentApproach:
@@ -28,6 +28,7 @@ class GradientDescentApproach:
         self.logger = logging.getLogger(__name__)
         self._is_debug = self.logger.getEffectiveLevel() == 10
 
+        self.logger.debug(f'{torch.cuda.is_available()=}')
         self._torch_device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
     def from_motion_vectors(
@@ -81,7 +82,6 @@ class GradientDescentApproach:
         
         mv_tensor = self._mv_to_parameter(motion_vectors)
 
-        # pr.Parameter(torch.from_numpy(mv.astype(np.float32)).unsqueeze(0).contiguous().clone().detach())
         # yy, xx = torch.meshgrid(
         #     torch.linspace(0, 1, source.shape[0]),
         #     torch.linspace(0, 1, source.shape[1]),
@@ -118,14 +118,10 @@ class GradientDescentApproach:
 
         input = input.to(self._torch_device)
         target = target.to(self._torch_device)
-        motion_vectors = motion_vectors.to(self._torch_device)
+        motion_vectors = pr.Parameter(motion_vectors.to(self._torch_device))
         base_grid = self._get_base_grid(height, width).to(self._torch_device)
-        optimizer = torch.optim.SGD([motion_vectors], lr=self._learning_rate, momentum=0.9)
 
-        self.logger.debug(f'{input.device=}')
-        self.logger.debug(f'{target.device=}')
-        self.logger.debug(f'{motion_vectors.device=}')
-        self.logger.debug(f'{base_grid.device=}')
+        optimizer = torch.optim.SGD([motion_vectors], lr=self._learning_rate, momentum=0.9)
 
         for step in range(self._steps_num):
             optimizer.zero_grad()
@@ -141,7 +137,7 @@ class GradientDescentApproach:
             loss.backward()
             optimizer.step()
 
-            if step % 100 == 0:
+            if step % 1000 == 0:
                 self.logger.debug(f'Step {step}: loss = {loss.item():.8f}')
 
         return warped_input
@@ -187,8 +183,8 @@ class GradientDescentApproach:
         return img.detach().squeeze(0).permute(1, 2, 0).contiguous().cpu().numpy()
     
     @staticmethod
-    def _mv_to_parameter(mv: npt.NDArray[np.float32]) -> pr.Parameter:
-        return pr.Parameter(torch.from_numpy(mv.astype(np.float32)).unsqueeze(0).contiguous().clone().detach())
+    def _mv_to_parameter(mv: npt.NDArray[np.float32]) -> torch.Tensor:
+        return torch.from_numpy(mv.astype(np.float32)).unsqueeze(0).contiguous().clone().detach()
 
     @staticmethod
     def _mv_to_numpy(mv: torch.Tensor) -> npt.NDArray[np.float32]:
