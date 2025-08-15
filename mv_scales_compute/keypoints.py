@@ -39,9 +39,9 @@ class MatchedPoints(NamedTuple):
 
 @dataclass
 class ApproachParameters:
-    MatchesThreshold = 50
-    NumPointsToCompare = 10
-    IsMovingBackward = True
+    MatchesThreshold: int = 50
+    NumPointsToCompare: int = 10
+    IsMovingBackward: bool = True
 
 
 class KeypointsApproach:
