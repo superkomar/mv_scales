@@ -8,7 +8,8 @@ import logging
 import os
 from dataclasses import dataclass
 
-from .utils import read_exr, write_exr, ImageUtils
+from .utils import ExrUtils, ImageUtils
+from .approach_base import ApproachBase
 
 @dataclass
 class ApproachParameters:
@@ -18,7 +19,7 @@ class ApproachParameters:
     ZeroThreshold: float = 1e-6
 
 
-class GradientDescentApproach:
+class GradientDescentApproach(ApproachBase):
 
     def __init__(self, parameters: ApproachParameters = ApproachParameters()) -> None:
         
@@ -84,28 +85,30 @@ class GradientDescentApproach:
         
         mv_tensor = self._mv_to_parameter(motion_vectors)
 
-        warped_img, final_mv = self._run_gradient_descent(
+        warped_tensor, final_mv_tensor = self._run_gradient_descent(
             input=source_tensor, motion_vectors=mv_tensor, target=target_tensor
         )
 
-        new_motion_vectors = self._mv_to_numpy(final_mv)
+        custom_motion_vectors = self._mv_to_numpy(final_mv_tensor)
 
         # Debug condition
         if self._is_debug:
             dir_name = 'debug'
             os.makedirs('debug', exist_ok=True)
-            write_exr(source, os.path.join(dir_name, 'source.exr'))
-            write_exr(target, os.path.join(dir_name, 'target.exr'))
-            write_exr(motion_vectors, os.path.join(dir_name, 'mv_original.exr'))
-            write_exr(new_motion_vectors, os.path.join(dir_name, 'mv_final.exr'))
-            write_exr(self._tensor_to_numpy(warped_img), os.path.join(dir_name, 'warped_final.exr'))
+            ExrUtils.write_exr(source, os.path.join(dir_name, 'source.exr'))
+            ExrUtils.write_exr(target, os.path.join(dir_name, 'target.exr'))
+            ExrUtils.write_exr(motion_vectors, os.path.join(dir_name, 'mv_original.exr'))
+            ExrUtils.write_exr(custom_motion_vectors, os.path.join(dir_name, 'mv_final.exr'))
+            ExrUtils.write_exr(self._tensor_to_numpy(warped_tensor), os.path.join(dir_name, 'warped_final.exr'))
 
         motion_vectors = self._norm_to_mv(motion_vectors, self._is_moving_backward)
-        new_motion_vectors = self._norm_to_mv(new_motion_vectors, self._is_moving_backward)
+        custom_motion_vectors = self._norm_to_mv(custom_motion_vectors, self._is_moving_backward)
 
-        scale_x, scale_y = self._calc_motion_vectors_scales(
-            new_motion_vectors, motion_vectors, self._zero_threshold
-        )
+        # scale_x, scale_y = self._calc_motion_vectors_scales(
+        #     new_motion_vectors, motion_vectors, self._zero_threshold
+        # )
+
+        scale_x, scale_y = self.calculate_mv_scales(custom_motion_vectors, motion_vectors, self._zero_threshold)
         
         self.logger.info(f'Gradient Descent has completed')
         

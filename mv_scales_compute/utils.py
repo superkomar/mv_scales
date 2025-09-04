@@ -2,62 +2,149 @@ import os
 import OpenEXR
 import numpy as np
 import numpy.typing as npt
-from enum import IntEnum
 from typing import Tuple
+
+import torch
+import torch.nn.functional as F
 
 os.environ["OPENCV_IO_ENABLE_OPENEXR"]="1"
 import cv2
 
 
-def read_exr(filepath: str, rotate: bool = False) -> npt.NDArray[np.float16]:
-    if not os.path.isfile(filepath):
-        raise RuntimeError(f'Incorrect file path: {filepath}')
-    
-    with OpenEXR.File(filepath) as exr_file:
-        header = exr_file.header()
-        channels = exr_file.channels()
-        min, max = header["dataWindow"]
-        # height = max[1] - min[1] + 1
-        # width = max[0] - min[1] + 1
+class ExrUtils:
+    def read_exr(filepath: str, rotate: bool = False) -> npt.NDArray[np.float16]:
+        if not os.path.isfile(filepath):
+            raise RuntimeError(f'Incorrect file path: {filepath}')
         
-        channels_data = []
-        for channel, values in channels.items():
-            pixels = values.pixels
-
-            if rotate:
-                new_shape = (1, 0, *(range(2, len(values.pixels.shape))))
-                pixels = pixels.transpose(new_shape)
+        with OpenEXR.File(filepath) as exr_file:
+            header = exr_file.header()
+            channels = exr_file.channels()
+            line_order = header['lineOrder']
+            min, max = header["dataWindow"]
+            # height = max[1] - min[1] + 1
+            # width = max[0] - min[1] + 1
             
-            channels_data.append(pixels)
+            channels_data = []
+            for _, values in channels.items():
+                pixels = values.pixels
 
-        return np.stack(channels_data, axis=-1) if len(channels_data) > 1 else channels_data[0]
+                if rotate:
+                    new_shape = (1, 0, *(range(2, len(values.pixels.shape))))
+                    pixels = pixels.transpose(new_shape)
+                
+                channels_data.append(pixels)
+
+            if len(channels_data) == 1:
+                return channels_data[0]
+            
+            data = np.stack(channels_data,axis=-1)
+            if line_order == OpenEXR.LineOrder.INCREASING_Y:
+                data = data[..., ::-1]
+
+            return data
     
-def write_exr(img: npt.NDArray[np.float32], file_path: str) -> None:
-    header = {
-        "compression" : OpenEXR.ZIP_COMPRESSION,
-        "type" : OpenEXR.scanlineimage
-    }
-
-    if img.shape[2] == 2:
-        channels = {
-            'R': img[..., 0].astype('float16'),
-            'G': img[..., 1].astype('float16')
-        }
-    else:
-        channels = {
-            "RGB": img.astype('float16')
+    @staticmethod
+    def write_exr(img: npt.NDArray[np.float32], file_path: str) -> None:
+        header = {
+            "compression" : OpenEXR.ZIP_COMPRESSION,
+            "type" : OpenEXR.scanlineimage
         }
 
-    with OpenEXR.File(header, channels) as output:
-        output.write(file_path)
+        if img.shape[2] == 2:
+            channels = {
+                'R': img[..., 0].astype('float16'),
+                'G': img[..., 1].astype('float16'),
+            }
+        else:
+            channels = {
+                "RGB": img.astype('float16')
+            }
 
-def print_pixels(filepath: str, points: list) -> None:
-    img = read_exr(filepath)
+        with OpenEXR.File(header, channels) as output:
+            output.write(file_path)
 
-    print(f'points for {filepath}')
-    for point in points:
-        print(f'{point=}: {img[point[0], point[1]]}')
+    @staticmethod
+    def get_pixels_value(image: npt.NDArray[np.float32], coords: list) -> None:
+        for point in coords:
+            print(f'{point=}: {image[point[0], point[1]]}')
 
+class TorchUtils:
+    @staticmethod
+    def warp_image(
+        image: npt.NDArray[np.float32], motion_vectors: npt.NDArray[np.float32], change_direction: bool = True, align_corners: bool = False
+    ) -> npt.NDArray[np.float32]:
+        
+        height, width = image.shape[:2]
+
+        input_tensor = TorchUtils._image_to_tensor(image)
+
+        base_grid = TorchUtils._get_base_grid(height, width)
+        motion_grid = base_grid + TorchUtils._mv_to_grid(motion_vectors, change_direction, align_corners)
+
+        warped_tensor = F.grid_sample(
+            input_tensor, motion_grid,
+            mode='bilinear',
+            padding_mode="zeros",
+            align_corners=align_corners
+        )
+
+        warped_image = TorchUtils._tensor_to_numpy(warped_tensor)
+
+        return warped_image
+    
+    @staticmethod
+    def _mv_to_grid(
+        motion_vectors: npt.NDArray[np.float32], change_direction: bool, align_corners: bool
+    ) -> npt.NDArray[np.float32]:
+    
+        motion_vectors = motion_vectors[..., :2]
+        motion_vectors = motion_vectors[..., ::-1]
+
+        height, width = motion_vectors.shape[:2]
+
+        result = np.empty_like(motion_vectors, dtype=np.float32)
+        result[..., 0] = motion_vectors[..., 0] * height
+        result[..., 1] = motion_vectors[..., 1] * width
+        
+        corner = 1 if align_corners else 0
+        result[..., 0] = result[..., 0] * (2.0 / (height - corner))
+        result[..., 1] = result[..., 1] * (2.0 / (width - corner))
+
+        sign = -1 if change_direction else 1
+        return result * sign
+
+    @staticmethod
+    def _norm_to_mv(
+        grid: npt.NDArray[np.float32], is_moving_backward: bool
+    ) -> npt.NDArray[np.float32]:
+
+        height, width = grid.shape[:2]
+
+        sign = -1 if is_moving_backward else 1
+        
+        result = np.empty_like(grid, dtype=np.float32)
+        result[..., 0] = grid[..., 0] * ((height - 1) / 2.0)
+        result[..., 1] = grid[..., 1] * ((width - 1) / 2.0)
+
+        return result * sign
+    
+    @staticmethod
+    def _tensor_to_numpy(img: torch.Tensor) -> npt.NDArray[np.float32]:
+        return img.detach().squeeze(0).permute(1, 2, 0).contiguous().cpu().numpy()
+
+    @staticmethod
+    def _get_base_grid(height: int, width: int) -> torch.Tensor:
+        yy, xx = torch.meshgrid(
+            torch.linspace(-1, 1, height, device='cpu'),
+            torch.linspace(-1, 1, width, device='cpu'),
+            indexing='ij'
+        )
+
+        return torch.stack((xx, yy), dim=-1).unsqueeze(0).contiguous()
+    
+    @staticmethod
+    def _image_to_tensor(img: npt.NDArray[np.float32]) -> torch.Tensor:
+        return torch.from_numpy(img.astype(np.float32)).permute(2, 0, 1).unsqueeze(0).clone().contiguous()
 
 class ImageUtils:
     @staticmethod
@@ -165,28 +252,3 @@ class ImageUtils:
         warped[flat_dst_y, flat_dst_x] = image[flat_src_y, flat_src_x]
         
         return warped
-
-    @staticmethod
-    def diff_images(
-        img_1: npt.NDArray[np.float32], img_2: npt.NDArray[np.float32], diff_eps: float = 1.0e-6
-    ) -> npt.NDArray[np.float32]:
-        norm_img_1 = ImageUtils.normalize(img_1)
-        norm_img_2 = ImageUtils.normalize(img_2)
-
-        diff = np.abs(norm_img_1 - norm_img_2)
-        diff_mask = diff > diff_eps
-        
-        zero_diff = diff[diff_mask]
-
-        diff[zero_diff] = 0.0
-
-        return diff
-
-    @staticmethod
-    def diff_images_as_grayscale(img_1: npt.NDArray[np.float32], img_2: npt.NDArray[np.float32]) -> npt.NDArray[np.uint8]:
-        gray_1 = ImageUtils.make_8bit(img_1)
-        gray_2 = ImageUtils.make_8bit(img_2)
-
-        return np.abs(gray_1 - gray_2)
-
-
