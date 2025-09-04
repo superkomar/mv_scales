@@ -19,6 +19,20 @@ options:
   -log_level {DEBUG,INFO}           Logging level
 ```
 
+## Motion vectors
+
+Each cell in the file contains a vector pointing from the previous position to the current position (from the previous frame to the current frame)
+
+**Example:**
+We have a two frames (*frame_1* and *frame_2*) and heir corresponding motion vector files (*mv_1*, *mv_2*).
+To reconstruct *frame_1* from *frame_2*, we should take *frame_2* and apply the reversed *mv_2*.
+
+The motion vectors are stored as *'.exr'* files
+
+Movement direction format:
+* The X-axis is stored in the second index (ex. *mv[y, x, 1]*)
+* The Y-axis is stored in the first index (ex. *mv[y, x, 0]*)
+
 ## Algorithms API
 
 Every algorithm can calculate the scales based on two different types of input
