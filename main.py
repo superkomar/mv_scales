@@ -3,8 +3,8 @@ from typing import NamedTuple, Tuple
 import logging
 
 from mv_scales_compute import ApproachBase
-from mv_scales_compute import KeypointsApproach
-from mv_scales_compute import GradientDescentApproach
+from mv_scales_compute import Keypoints
+from mv_scales_compute import GradientDescent
 from mv_scales_compute import ExrUtils
 
 
@@ -19,7 +19,7 @@ class Dataset(NamedTuple):
     Mv_2: str
 
 
-def parse_cli_arguments() -> Tuple[str, Dataset]:
+def parse_arguments() -> Tuple[str, Dataset]:
 
     parser = argparse.ArgumentParser()
     parser.add_argument('-app', help='Choose one of the following approaches', choices=APPROACH_LIST, default=APPROACH_LIST[2])
@@ -42,32 +42,32 @@ def parse_cli_arguments() -> Tuple[str, Dataset]:
 
 def get_approach(name: str) -> ApproachBase:
     if name == APPROACH_LIST[0]:
-        return KeypointsApproach()
+        return Keypoints()
     
     elif name == APPROACH_LIST[1]:
-        return GradientDescentApproach()
+        return GradientDescent()
     
     else:
         raise RuntimeError(f'{name} is incorrect approach name')
 
 if __name__ == '__main__':
 
-    approach_name, dataset = parse_cli_arguments()
+    approach_name, dataset = parse_arguments()
 
     logger = logging.getLogger(__name__)
 
     approach = get_approach(approach_name)
 
     if dataset.Frame_1 is not '' and dataset.Frame_2 is not '':
-        frame_1 = ExrUtils.read_exr(dataset.Frame_1)
-        frame_2 = ExrUtils.read_exr(dataset.Frame_2)
-        motion_vectors = ExrUtils.read_exr(dataset.Mv_2)
+        frame_1 = ExrUtils.read_image(dataset.Frame_1)
+        frame_2 = ExrUtils.read_image(dataset.Frame_2)
+        motion_vectors = ExrUtils.read_motion_vectors(dataset.Mv_2)
         
         scale_x, scale_y = approach.from_frames(frame_1, frame_2, motion_vectors)
 
     else:
-        motion_vectors_1 = ExrUtils.read_exr(dataset.Mv_1)
-        motion_vectors_2 = ExrUtils.read_exr(dataset.Mv_2)
+        motion_vectors_1 = ExrUtils.read_motion_vectors(dataset.Mv_1)
+        motion_vectors_2 = ExrUtils.read_motion_vectors(dataset.Mv_2)
 
         scale_x, scale_y = approach.from_motion_vectors(motion_vectors_1, motion_vectors_2)
 

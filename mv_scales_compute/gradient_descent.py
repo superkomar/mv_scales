@@ -9,53 +9,55 @@ import os
 from dataclasses import dataclass
 
 from .utils import ExrUtils, ImageUtils
-from .approach_base import ApproachBase
+from .approach_base import ApproachBase, ApproachParameters
+
 
 @dataclass
-class ApproachParameters:
+class GDParameters(ApproachParameters):
     StepsNum: int = 10000
     LearningRate: float = 1e-4
     IsMovingBackward: bool = True
-    ZeroThreshold: float = 1e-6
+    # ZeroEpsilon: float = 1e-6
 
 
-class GradientDescentApproach(ApproachBase):
+class GradientDescent(ApproachBase):
 
-    def __init__(self, parameters: ApproachParameters = ApproachParameters()) -> None:
+    def __init__(self, parameters: GDParameters = GDParameters()) -> None:
+        super().__init__()
         
         self._steps_num = parameters.StepsNum
         self._learning_rate = parameters.LearningRate
         self._is_moving_backward = parameters.IsMovingBackward
-        self._zero_threshold = parameters.ZeroThreshold
+        self._zero_epsilon = parameters.ZeroEpsilon
 
         self.logger = logging.getLogger(__name__)
         self._is_debug = self.logger.getEffectiveLevel() == 10
 
-        self.logger.debug(f'{torch.cuda.is_available()=}')
         self._torch_device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
     def from_motion_vectors(
-            self, motion_vectors_1: npt.NDArray[np.float16], motion_vectors_2: npt.NDArray[np.float16]
+            self, motion_vectors_1: npt.NDArray[np.float32], motion_vectors_2: npt.NDArray[np.float32]
     ) -> Tuple[float, float]:
         
         if motion_vectors_1 is None or motion_vectors_2 is None:
             raise RuntimeError('One of the argument is None')
 
         if self._is_moving_backward:
-            source, target = motion_vectors_2, motion_vectors_1
-            motion_vectors = motion_vectors_2[..., :2] * (-1)
-
             self.logger.debug('from "motion_vectors_2" to "motion_vectors_1"')
+
+            source, target = motion_vectors_2, motion_vectors_1
+            motion_vectors = motion_vectors_2[..., :2]
+        
         else:
+            self.logger.debug('from "motion_vectors_1" to "motion_vectors_2"')
+
             source, target = motion_vectors_1, motion_vectors_2
             motion_vectors = motion_vectors_1[..., :2]
-
-            self.logger.debug('from "motion_vectors_1" to "motion_vectors_2"')
 
         return self._compute_scales(source=source, target=target, motion_vectors=motion_vectors)
     
     def from_frames(
-        self, frame_1: npt.NDArray[np.float16], frame_2: npt.NDArray[np.float16], motion_vectors: npt.NDArray[np.float16]
+        self, frame_1: npt.NDArray[np.float32], frame_2: npt.NDArray[np.float32], motion_vectors: npt.NDArray[np.float32]
     ) -> Tuple[float, float]:
         
         if frame_1 is None or frame_2 is None or motion_vectors is None:
@@ -70,7 +72,7 @@ class GradientDescentApproach(ApproachBase):
 
             source, target = frame_1, frame_2
 
-        motion_vectors = self._norm_to_grid(motion_vectors, self._is_moving_backward)
+        motion_vectors = motion_vectors[..., :2]
 
         return self._compute_scales(source=source, target=target, motion_vectors=motion_vectors)
 
@@ -78,7 +80,7 @@ class GradientDescentApproach(ApproachBase):
         self, source: npt.NDArray[np.float32], target: npt.NDArray[np.float32], motion_vectors: npt.NDArray[np.float32]
     ) -> Tuple[float, float]:
         
-        self.logger.info(f'Gradient Descent has started')
+        motion_vectors = self._norm_to_grid(motion_vectors)
 
         source_tensor = self._numpy_to_tensor(source)
         target_tensor = self._numpy_to_tensor(target)
@@ -95,22 +97,16 @@ class GradientDescentApproach(ApproachBase):
         if self._is_debug:
             dir_name = 'debug'
             os.makedirs('debug', exist_ok=True)
-            ExrUtils.write_exr(source, os.path.join(dir_name, 'source.exr'))
-            ExrUtils.write_exr(target, os.path.join(dir_name, 'target.exr'))
-            ExrUtils.write_exr(motion_vectors, os.path.join(dir_name, 'mv_original.exr'))
+            # ExrUtils.write_exr(source, os.path.join(dir_name, 'source.exr'))
+            # ExrUtils.write_exr(target, os.path.join(dir_name, 'target.exr'))
+            # ExrUtils.write_exr(motion_vectors, os.path.join(dir_name, 'mv_original.exr'))
             ExrUtils.write_exr(custom_motion_vectors, os.path.join(dir_name, 'mv_final.exr'))
             ExrUtils.write_exr(self._tensor_to_numpy(warped_tensor), os.path.join(dir_name, 'warped_final.exr'))
 
-        motion_vectors = self._norm_to_mv(motion_vectors, self._is_moving_backward)
-        custom_motion_vectors = self._norm_to_mv(custom_motion_vectors, self._is_moving_backward)
+        motion_vectors = self._norm_to_mv(motion_vectors)
+        custom_motion_vectors = self._norm_to_mv(custom_motion_vectors)
 
-        # scale_x, scale_y = self._calc_motion_vectors_scales(
-        #     new_motion_vectors, motion_vectors, self._zero_threshold
-        # )
-
-        scale_x, scale_y = self.calculate_mv_scales(custom_motion_vectors, motion_vectors, self._zero_threshold)
-        
-        self.logger.info(f'Gradient Descent has completed')
+        scale_x, scale_y = self.calculate_mv_scales(custom_motion_vectors, motion_vectors, self._zero_epsilon)
         
         return scale_x, scale_y
     
@@ -168,27 +164,6 @@ class GradientDescentApproach(ApproachBase):
         return loss
     
     @staticmethod
-    def _calc_motion_vectors_scales(
-        new_mv: npt.NDArray[np.float32],
-        old_mv: npt.NDArray[np.float32],
-        zero_epsilon: float
-    ) -> Tuple[float, float]:
-
-        new_mv_x = new_mv[..., 1]
-        new_mv_y = new_mv[..., 0]
-        
-        old_mv_x = old_mv[..., 1]
-        old_mv_y = old_mv[..., 0]
-
-        zero_mask_x = np.abs(old_mv_x) > zero_epsilon
-        zero_mask_y = np.abs(old_mv_y) > zero_epsilon
-
-        scale_x = np.mean(new_mv_x[zero_mask_x] / old_mv_x[zero_mask_x], dtype=np.float32)
-        scale_y = np.mean(new_mv_y[zero_mask_y] / old_mv_y[zero_mask_y], dtype=np.float32)
-
-        return scale_x, scale_y
-    
-    @staticmethod
     def _get_base_grid(height: int, width: int) -> torch.Tensor:
         yy, xx = torch.meshgrid(
             torch.linspace(-1, 1, height, device='cpu'),
@@ -199,40 +174,32 @@ class GradientDescentApproach(ApproachBase):
         return torch.stack((xx, yy), dim=-1).unsqueeze(0).contiguous()
     
     @staticmethod
-    def _norm_to_grid(
-        motion_vectors: npt.NDArray[np.float32], is_moving_backward: bool
-    ) -> npt.NDArray[np.float32]:
+    def _norm_to_grid(motion_vectors: npt.NDArray[np.float32]) -> npt.NDArray[np.float32]:
     
         motion_vectors = motion_vectors[..., :2]
         motion_vectors = motion_vectors[..., ::-1]
 
-        sign = -1 if is_moving_backward else 1
-
         height, width = motion_vectors.shape[:2]
 
         result = np.empty_like(motion_vectors, dtype=np.float32)
-        result[..., 0] = motion_vectors[..., 0] * (height - 1)
-        result[..., 1] = motion_vectors[..., 1] * (width - 1)
+        result[..., 0] = motion_vectors[..., 0] * (width - 1)
+        result[..., 1] = motion_vectors[..., 1] * (height - 1)
 
-        result[..., 0] = result[..., 0] * (2.0 / (height - 1))
-        result[..., 1] = result[..., 1] * (2.0 / (width - 1))
+        result[..., 0] = result[..., 0] * (2.0 / (width - 1))
+        result[..., 1] = result[..., 1] * (2.0 / (height - 1))
 
-        return result * sign
+        return result
 
     @staticmethod
-    def _norm_to_mv(
-        grid: npt.NDArray[np.float32], is_moving_backward: bool
-    ) -> npt.NDArray[np.float32]:
+    def _norm_to_mv(grid: npt.NDArray[np.float32]) -> npt.NDArray[np.float32]:
 
         height, width = grid.shape[:2]
-
-        sign = -1 if is_moving_backward else 1
         
         result = np.empty_like(grid, dtype=np.float32)
-        result[..., 0] = grid[..., 0] * ((height - 1) / 2.0)
-        result[..., 1] = grid[..., 1] * ((width - 1) / 2.0)
+        result[..., 0] = grid[..., 0] * ((width - 1) / 2.0)
+        result[..., 1] = grid[..., 1] * ((height - 1) / 2.0)
 
-        return result * sign
+        return result
 
     
     @staticmethod

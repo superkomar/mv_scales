@@ -12,36 +12,31 @@ import cv2
 
 
 class ExrUtils:
-    def read_exr(filepath: str, rotate: bool = False) -> npt.NDArray[np.float16]:
+    @staticmethod
+    def read_image(filepath: str) -> npt.NDArray[np.float32]:
+        return ExrUtils._read_exr(filepath)
+
+    @staticmethod
+    def read_motion_vectors(filepath: str, rotate_xy: bool = False) -> npt.NDArray[np.float32]:
+        motion_vectors = ExrUtils._read_exr(filepath)
+
+        motion_vectors = motion_vectors[..., :2]
+
+        if rotate_xy:
+            motion_vectors = motion_vectors[..., ::-1]
+
+        return motion_vectors
+    
+    @staticmethod
+    def _read_exr(filepath: str) -> npt.NDArray[np.float32]:
         if not os.path.isfile(filepath):
             raise RuntimeError(f'Incorrect file path: {filepath}')
         
         with OpenEXR.File(filepath) as exr_file:
-            header = exr_file.header()
-            channels = exr_file.channels()
-            line_order = header['lineOrder']
-            min, max = header["dataWindow"]
-            # height = max[1] - min[1] + 1
-            # width = max[0] - min[1] + 1
-            
-            channels_data = []
-            for _, values in channels.items():
-                pixels = values.pixels
+            channels_exr = exr_file.channels()
+            channels = [np.array(value.pixels, dtype=np.float32) for value in channels_exr.values()]
 
-                if rotate:
-                    new_shape = (1, 0, *(range(2, len(values.pixels.shape))))
-                    pixels = pixels.transpose(new_shape)
-                
-                channels_data.append(pixels)
-
-            if len(channels_data) == 1:
-                return channels_data[0]
-            
-            data = np.stack(channels_data,axis=-1)
-            if line_order == OpenEXR.LineOrder.INCREASING_Y:
-                data = data[..., ::-1]
-
-            return data
+            return np.stack(channels, axis=-1) if len(channels) > 1 else channels[0]
     
     @staticmethod
     def write_exr(img: npt.NDArray[np.float32], file_path: str) -> None:
@@ -50,14 +45,21 @@ class ExrUtils:
             "type" : OpenEXR.scanlineimage
         }
 
-        if img.shape[2] == 2:
+        if len(img.shape) == 2 or img.shape[2] == 1:
+            channels = {
+                "RGB": img.astype('float16')
+            }
+
+        elif img.shape[2] == 2:
             channels = {
                 'R': img[..., 0].astype('float16'),
                 'G': img[..., 1].astype('float16'),
             }
         else:
             channels = {
-                "RGB": img.astype('float16')
+                'R': img[..., 0].astype('float16'),
+                'G': img[..., 1].astype('float16'),
+                'B': img[..., 2].astype('float16'),
             }
 
         with OpenEXR.File(header, channels) as output:
@@ -148,7 +150,7 @@ class TorchUtils:
 
 class ImageUtils:
     @staticmethod
-    def normalize(image: npt.NDArray[np.float16]) -> npt.NDArray[np.float16]:
+    def normalize(image: npt.NDArray[np.float32]) -> npt.NDArray[np.float16]:
         min = image.min()
         max = image.max()
 
@@ -156,7 +158,7 @@ class ImageUtils:
         return normalized
     
     @staticmethod
-    def make_8bit(image: npt.NDArray[np.float16]) -> npt.NDArray[np.uint8]:
+    def make_8bit(image: npt.NDArray[np.float32]) -> npt.NDArray[np.uint8]:
         min = image.min()
         max = image.max()
 
@@ -168,7 +170,7 @@ class ImageUtils:
         return image_8bit.astype(np.uint8)
     
     @staticmethod
-    def make_grayscale(img: npt.NDArray[np.float16]) -> npt.NDArray[np.uint8]:
+    def make_grayscale(img: npt.NDArray[np.float32]) -> npt.NDArray[np.uint8]:
         tone_mapping = cv2.createTonemapDrago(gamma=2.5, bias=0.85)
         tone_mapped_img = tone_mapping.process((img[:,:,:3]).astype(np.float32))
         tone_mapped_img = ImageUtils.remove_nans(tone_mapped_img)
@@ -214,7 +216,7 @@ class ImageUtils:
             ((x_1, y_1), w_11)
         ]
 
-        return max(quads, key=lambda x: x[1])[0]
+        return max(quads, key=lambda q: q[1])[0]
 
     @staticmethod
     def remove_nans(image: npt.NDArray[np.float32]) -> npt.NDArray[np.float32]:
