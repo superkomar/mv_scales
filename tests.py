@@ -129,7 +129,7 @@ class TestLauncher:
         self.logger = logging.getLogger(__name__)
 
     def test_frames_approach(self) -> None:
-        if not (self.dataset.FramePath_1 and self.dataset.FramePath_2 and self.dataset.has_frames_points()):
+        if not (self.dataset.FramePath_1 and self.dataset.FramePath_2 and dataset.MvPath_2):
             return
 
         self.logger.info('! Frames comparison !')
@@ -138,14 +138,13 @@ class TestLauncher:
         frame_2 = ExrUtils.read_image(dataset.FramePath_2)
         mv = ExrUtils.read_motion_vectors(dataset.MvPath_2, rotate_xy=self.rotate_xy)
 
-        ### Manual scales
-        scale_x, scale_y = self.calc_manual(
-            custom_mv=dataset.get_frames_vectors(),
-            original_mv=self.get_mv_values(mv, dataset.FramePoints_2),
-            zero_eps=self.zero_eps
-        )
-        self.logger.info(f'Manual    | scale_x = {scale_x:.8f}; scale_y = {scale_y:.8f}')
-        ###
+        if self.dataset.has_frames_points():
+            scale_x, scale_y = self.calc_manual(
+                custom_mv=dataset.get_frames_vectors(),
+                original_mv=self.get_mv_values(mv, dataset.FramePoints_2),
+                zero_eps=self.zero_eps
+            )
+            self.logger.info(f'Manual    | scale_x = {scale_x:.8f}; scale_y = {scale_y:.8f}')
 
         frame_1 = self.data_slicer(frame_1)
         frame_2 = self.data_slicer(frame_2)
@@ -164,7 +163,7 @@ class TestLauncher:
         logger.info('')
 
     def test_mv_approach(self) -> None:
-        if not (dataset.MvPath_1 and dataset.MvPath_2 and dataset.has_mv_points()):
+        if not (dataset.MvPath_1 and dataset.MvPath_2):
             return
 
         self.logger.info('! Motion vectors comparison !')
@@ -172,14 +171,13 @@ class TestLauncher:
         mv_1 = ExrUtils.read_motion_vectors(dataset.MvPath_1, self.rotate_xy)
         mv_2 = ExrUtils.read_motion_vectors(dataset.MvPath_2, self.rotate_xy)
 
-        ### Manual scales
-        scale_x, scale_y = self.calc_manual(
-            custom_mv=dataset.get_mv_vectors(),
-            original_mv=self.get_mv_values(mv_2, dataset.FramePoints_2),
-            zero_eps=self.zero_eps
-        )
-        self.logger.info(f'Manual    | scale_x = {scale_x:.8f}; scale_y = {scale_y:.8f}')
-        ###
+        if dataset.has_mv_points():
+            scale_x, scale_y = self.calc_manual(
+                custom_mv=dataset.get_mv_vectors(),
+                original_mv=self.get_mv_values(mv_2, dataset.MvPoints_2),
+                zero_eps=self.zero_eps
+            )
+            self.logger.info(f'Manual    | scale_x = {scale_x:.8f}; scale_y = {scale_y:.8f}')
 
         mv_1 = self.data_slicer(mv_1)
         mv_2 = self.data_slicer(mv_2)
