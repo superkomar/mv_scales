@@ -118,13 +118,14 @@ TEST_DATASET = {
 
 class TestLauncher:
 
-    def __init__(self, dataset: Dataset, data_slicer: Callable, app_chooser: Callable):
+    def __init__(self, dataset: Dataset, data_slicer: Callable, app_chooser: Callable, debug_dir: str):
         self.dataset = dataset
         self.data_slicer = data_slicer
         self.app_chooser = app_chooser
         self.rotate_xy = dataset.Rotate_xy
+        self.debug_dir = debug_dir
 
-        self.zero_eps = 1e-4
+        self.zero_eps = 1e-6
 
         self.logger = logging.getLogger(__name__)
 
@@ -156,7 +157,9 @@ class TestLauncher:
             self.logger.info(f'Keypoints | scale_x = {scale_x:.8f}; scale_y = {scale_y:.8f}')
 
         if self.app_chooser(APPROACHES[2]):
-            app = GradientDescent(GDParameters(ZeroEpsilon=self.zero_eps))
+            app = GradientDescent(GDParameters(
+                ZeroEpsilon=self.zero_eps, DebugDir=self.debug_dir
+            ))
             scale_x, scale_y = app.from_frames(frame_1, frame_2, mv)
             self.logger.info(f'Gradient  | scale_x = {scale_x:.8f}; scale_y = {scale_y:.8f}')
 
@@ -183,12 +186,18 @@ class TestLauncher:
         mv_2 = self.data_slicer(mv_2)
 
         if self.app_chooser(APPROACHES[1]):
-            app = Keypoints(KPParameters(ZeroEpsilon=self.zero_eps))
+            app = Keypoints(KPParameters(
+                ZeroEpsilon=self.zero_eps
+            ))
+            
             scale_x, scale_y = app.from_motion_vectors(mv_1, mv_2)
             self.logger.info(f'Keypoints | scale_x = {scale_x:.8f}; scale_y = {scale_y:.8f}')
 
         if self.app_chooser(APPROACHES[2]):
-            app = GradientDescent(GDParameters(ZeroEpsilon=self.zero_eps))
+            app = GradientDescent(GDParameters(
+                ZeroEpsilon=self.zero_eps, DebugDir=self.debug_dir
+            ))
+
             scale_x, scale_y = app.from_motion_vectors(mv_1, mv_2)
             self.logger.info(f'Gradient  | scale_x = {scale_x:.8f}; scale_y = {scale_y:.8f}')
 
@@ -214,6 +223,7 @@ if __name__ == '__main__':
     parser.add_argument('-target', choices=TARGETS, default=TARGETS[0])
     parser.add_argument('-app', choices=APPROACHES, default=APPROACHES[0])
     parser.add_argument('-log', choices=['info', 'debug'], default='debug')
+    parser.add_argument('-slice', action='store_true')
     args = parser.parse_args()
 
     logging.basicConfig(
@@ -232,11 +242,17 @@ if __name__ == '__main__':
 
     app_chooser = lambda name: args.app == APPROACHES[0] or args.app == name
 
-    slice_y = slice(500, 1000)
-    slice_x = slice(200,  800)
+    if args.slice: 
+        # slice_y = slice(500, 1000)
+        # slice_x = slice(200,  800)
+        slice_y = slice(0, 500)
+        slice_x = slice(0, 500)
 
-    data_slicer = lambda img: img
-    # data_slicer = lambda img: img[slice_y, slice_x]
+        data_slicer = lambda img: img[slice_y, slice_x]
+    else:
+        data_slicer = lambda img: img
+
+    debug_dir = os.path.join(os.path.dirname(__file__), 'debug')
 
     for name in dataset_names:
         logger.info('')
@@ -244,7 +260,12 @@ if __name__ == '__main__':
 
         dataset = TEST_DATASET[name]
 
-        tests = TestLauncher(dataset=dataset, app_chooser=app_chooser, data_slicer=data_slicer)
+        tests = TestLauncher(
+            dataset=dataset,
+            app_chooser=app_chooser,
+            data_slicer=data_slicer,
+            debug_dir=os.path.join(debug_dir, name)
+        )
 
         if args.target == TARGETS[0] or args.target == TARGETS[1]:
             tests.test_frames_approach()

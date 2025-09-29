@@ -14,13 +14,40 @@ from .approach_base import ApproachBase, ApproachParameters
 
 @dataclass
 class GDParameters(ApproachParameters):
-    StepsNum: int = 10000
-    LearningRate: float = 1e-4
+    StepsNum: int = int(1e5)
+    LearningRate: float = None
     IsMovingBackward: bool = True
-    # ZeroEpsilon: float = 1e-6
+    DebugDir: str = 'debug'
+
+class Optimizer:
+
+    def __init__(self, params: pr.Parameter, steps_num: int, lr_beg: float, lr_end: float):
+        self._lr_beg = lr_beg
+        self._lr_end = lr_end
+        self._steps_num = steps_num
+
+        self._optimizer = torch.optim.AdamW([params], lr=self._lr_beg)
+        
+        self._scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+            self._optimizer, T_max=self._steps_num, eta_min=self._lr_end
+        )
+
+    def zero_grad(self) -> None:
+        self._optimizer.zero_grad()
+
+    def step(self, loss: torch.Tensor) -> None:
+        self._optimizer.step()
+        self._scheduler.step()
+
+    def log(self, log_func: callable) -> None:
+        log_func(f'LR beg: {self._lr_beg}')
+        log_func(f'LR end: {self._scheduler.get_last_lr()[0]}')
 
 
 class GradientDescent(ApproachBase):
+
+    _DEF_LR_FRAMES_ = 1e-4
+    _DEF_LR_MV_ = 1e-3
 
     def __init__(self, parameters: GDParameters = GDParameters()) -> None:
         super().__init__()
@@ -31,7 +58,12 @@ class GradientDescent(ApproachBase):
         self._zero_epsilon = parameters.ZeroEpsilon
 
         self.logger = logging.getLogger(__name__)
+        
         self._is_debug = self.logger.getEffectiveLevel() == 10
+        self._debug_dir = parameters.DebugDir
+        
+        if self._is_debug:
+            os.makedirs(self._debug_dir, exist_ok=True)
 
         self._torch_device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
@@ -54,6 +86,8 @@ class GradientDescent(ApproachBase):
             source, target = motion_vectors_1, motion_vectors_2
             motion_vectors = motion_vectors_1[..., :2]
 
+        self._learning_rate = self._DEF_LR_MV_ if self._learning_rate == None else self._learning_rate
+
         return self._compute_scales(source=source, target=target, motion_vectors=motion_vectors)
     
     def from_frames(
@@ -73,6 +107,8 @@ class GradientDescent(ApproachBase):
             source, target = frame_1, frame_2
 
         motion_vectors = motion_vectors[..., :2]
+
+        self._learning_rate = self._DEF_LR_FRAMES_ if self._learning_rate == None else self._learning_rate
 
         return self._compute_scales(source=source, target=target, motion_vectors=motion_vectors)
 
@@ -95,13 +131,11 @@ class GradientDescent(ApproachBase):
 
         # Debug condition
         if self._is_debug:
-            dir_name = 'debug'
-            os.makedirs('debug', exist_ok=True)
-            # ExrUtils.write_exr(source, os.path.join(dir_name, 'source.exr'))
-            # ExrUtils.write_exr(target, os.path.join(dir_name, 'target.exr'))
-            # ExrUtils.write_exr(motion_vectors, os.path.join(dir_name, 'mv_original.exr'))
-            ExrUtils.write_exr(custom_motion_vectors, os.path.join(dir_name, 'mv_final.exr'))
-            ExrUtils.write_exr(self._tensor_to_numpy(warped_tensor), os.path.join(dir_name, 'warped_final.exr'))
+            ExrUtils.write_exr(source, os.path.join(self._debug_dir, 'source.exr'))
+            ExrUtils.write_exr(target, os.path.join(self._debug_dir, 'target.exr'))
+            ExrUtils.write_exr(motion_vectors, os.path.join(self._debug_dir, 'mv_original.exr'))
+            ExrUtils.write_exr(custom_motion_vectors, os.path.join(self._debug_dir, 'mv_final.exr'))
+            ExrUtils.write_exr(self._tensor_to_numpy(warped_tensor), os.path.join(self._debug_dir, 'warped_final.exr'))
 
         motion_vectors = self._norm_to_mv(motion_vectors)
         custom_motion_vectors = self._norm_to_mv(custom_motion_vectors)
@@ -127,7 +161,12 @@ class GradientDescent(ApproachBase):
 
         base_grid = self._get_base_grid(height, width).to(self._torch_device)
 
-        optimizer = torch.optim.AdamW([motion_vectors], lr=self._learning_rate)
+        optimizer = Optimizer(
+            params=motion_vectors,
+            steps_num=self._steps_num,
+            lr_beg=self._learning_rate,
+            lr_end=self._zero_epsilon
+        )
 
         num_steps_log = self._steps_num * 0.1
 
@@ -136,7 +175,7 @@ class GradientDescent(ApproachBase):
 
             motion_grid = base_grid + motion_vectors
 
-            motion_grid = torch.clamp(motion_grid, -1.2, 1.2)
+            motion_grid = torch.clamp(motion_grid, -1.1, 1.1)
 
             # input [1, C, H, W]; grid [1, H, W, 2]
             warped_input = F.grid_sample(
@@ -147,12 +186,14 @@ class GradientDescent(ApproachBase):
             )
 
             loss = self._calc_loss(warped_input=warped_input, target=target)
-
             loss.backward()
-            optimizer.step()
+
+            optimizer.step(loss)
 
             if step % num_steps_log == 0:
-                self.logger.debug(f'Step {step}: loss = {loss.item():.8f}')
+                self.logger.debug(f'Step {step}: loss = {loss.item():.10f}')
+
+        optimizer.log(self.logger.debug)
 
         return warped_input, motion_vectors
     
@@ -177,7 +218,9 @@ class GradientDescent(ApproachBase):
     def _norm_to_grid(motion_vectors: npt.NDArray[np.float32]) -> npt.NDArray[np.float32]:
     
         motion_vectors = motion_vectors[..., :2]
-        motion_vectors = motion_vectors[..., ::-1]
+        # motion_vectors = motion_vectors[..., ::-1]
+
+        return motion_vectors.copy()
 
         height, width = motion_vectors.shape[:2]
 
@@ -188,16 +231,28 @@ class GradientDescent(ApproachBase):
         result[..., 0] = result[..., 0] * (2.0 / (width - 1))
         result[..., 1] = result[..., 1] * (2.0 / (height - 1))
 
+        # result[..., 0] = motion_vectors[..., 0]
+        # result[..., 1] = motion_vectors[..., 1]
+
+        # result = np.ones_like(motion_vectors, dtype=np.float32) / 2
+
         return result
 
     @staticmethod
     def _norm_to_mv(grid: npt.NDArray[np.float32]) -> npt.NDArray[np.float32]:
 
+        return grid
+        # return grid[..., ::-1]
+
         height, width = grid.shape[:2]
         
         result = np.empty_like(grid, dtype=np.float32)
-        result[..., 0] = grid[..., 0] * ((width - 1) / 2.0)
-        result[..., 1] = grid[..., 1] * ((height - 1) / 2.0)
+        # result[..., 0] = grid[..., 0] * ((width - 1) / 2.0)
+        # result[..., 1] = grid[..., 1] * ((height - 1) / 2.0)
+        result[..., 0] = grid[..., 0] / 2.0
+        result[..., 1] = grid[..., 1] / 2.0
+        # result[..., 0] = grid[..., 0]
+        # result[..., 1] = grid[..., 1]
 
         return result
 
