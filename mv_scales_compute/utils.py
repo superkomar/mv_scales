@@ -66,6 +66,10 @@ class ExrUtils:
             output.write(file_path)
 
     @staticmethod
+    def is_image_flat(img: npt.NDArray[np.float32]) -> bool:
+        return np.max(img) - np.min(img) < np.finfo(np.float32).eps
+
+    @staticmethod
     def get_pixels_value(image: npt.NDArray[np.float32], coords: list) -> None:
         for point in coords:
             print(f'{point=}: {image[point[0], point[1]]}')
