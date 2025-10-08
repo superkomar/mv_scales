@@ -1,3 +1,5 @@
+__version__ = '0.1.1'
+
 from .keypoints import Keypoints, KPParameters
 
 from .gradient_descent import GradientDescent, GDParameters
