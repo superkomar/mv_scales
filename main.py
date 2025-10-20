@@ -183,8 +183,7 @@ def calc_scales(dataset: Dataset, approach: ApproachBase) -> ResultScales:
             ScaleX=0.0, ScaleY=0.0, SrcInfo=str(dataset), Message='one or more images are flat'
         )
     
-    # scale_x, scale_y = evaluator()
-    scale_x = scale_y = 0.0
+    scale_x, scale_y = evaluator()
 
     return ResultScales(ScaleX=scale_x, ScaleY=scale_y, SrcInfo=str(dataset), Message='')
 
