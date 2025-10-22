@@ -1,0 +1,1 @@
+-r ./mv_scales_compute/requirements.txt
