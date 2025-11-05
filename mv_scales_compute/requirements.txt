@@ -3,4 +3,4 @@
 numpy==2.2.6
 OpenEXR==3.3.4
 opencv-python==4.11.0.86
-torch==2.8.0
+torch==2.7.1
