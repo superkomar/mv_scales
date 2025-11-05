@@ -9,7 +9,7 @@ import numpy.typing as npt
 from mv_scales_compute import ExrUtils, ImageUtils, TorchUtils
 from mv_scales_compute import Keypoints, KPParameters
 from mv_scales_compute import GradientDescent, GDParameters
-from mv_scales_compute import ApproachBase
+from mv_scales_compute import ApproachBase, Method
 
 
 TARGETS = ['all', 'frames', 'mv']
@@ -205,10 +205,11 @@ class TestLauncher:
 
     @staticmethod
     def calc_manual(custom_mv: npt.NDArray[np.float32], original_mv: npt.NDArray[np.float32], zero_eps: float):
-        return Keypoints().calculate_mv_scales(
+        return Keypoints().calculate_scales(
             custom_mv=custom_mv,
             original_mv=original_mv,
-            zero_eps=zero_eps
+            zero_eps=zero_eps,
+            method=Method.median
         )
 
     @staticmethod

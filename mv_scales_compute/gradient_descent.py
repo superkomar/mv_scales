@@ -9,7 +9,7 @@ import os
 from dataclasses import dataclass
 
 from .utils import ExrUtils, ImageUtils
-from .approach_base import ApproachBase, ApproachParameters
+from .approach_base import ApproachBase, ApproachParameters, Method
 
 
 @dataclass
@@ -140,7 +140,7 @@ class GradientDescent(ApproachBase):
         motion_vectors = self._norm_to_mv(motion_vectors)
         custom_motion_vectors = self._norm_to_mv(custom_motion_vectors)
 
-        scale_x, scale_y = self.calculate_mv_scales(custom_motion_vectors, motion_vectors, self._zero_epsilon)
+        scale_x, scale_y = self.calculate_scales(custom_motion_vectors, motion_vectors, self._zero_epsilon, Method.mean)
         
         return scale_x, scale_y
     

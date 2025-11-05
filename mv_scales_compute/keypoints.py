@@ -9,7 +9,7 @@ os.environ["OPENCV_IO_ENABLE_OPENEXR"]="1"
 import cv2
 
 from .utils import ExrUtils, ImageUtils
-from .approach_base import ApproachBase, ApproachParameters
+from .approach_base import ApproachBase, ApproachParameters, Method
 
 
 class PixelCoords(NamedTuple):
@@ -301,7 +301,7 @@ class Keypoints(ApproachBase):
 
         #     self.logger.debug('')
 
-        return self.calculate_mv_scales(custom_mv, original_mv, self._zero_eps)
+        return self.calculate_scales(custom_mv, original_mv, self._zero_eps, Method.median)
     
     @staticmethod
     def _get_detector(detector):
