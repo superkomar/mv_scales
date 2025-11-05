@@ -50,7 +50,7 @@ class GradientDescent(ApproachBase):
     _DEF_LR_MV_ = 1e-3
 
     def __init__(self, parameters: GDParameters = GDParameters()) -> None:
-        super().__init__()
+        super().__init__(parameters)
         
         self._steps_num = parameters.StepsNum
         self._learning_rate = parameters.LearningRate
@@ -140,7 +140,7 @@ class GradientDescent(ApproachBase):
         motion_vectors = self._norm_to_mv(motion_vectors)
         custom_motion_vectors = self._norm_to_mv(custom_motion_vectors)
 
-        scale_x, scale_y = self.calculate_scales(custom_motion_vectors, motion_vectors, self._zero_epsilon, Method.mean)
+        scale_x, scale_y = self.calculate_scales(custom_motion_vectors, motion_vectors)
         
         return scale_x, scale_y
     

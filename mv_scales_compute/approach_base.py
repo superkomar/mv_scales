@@ -8,18 +8,23 @@ import numpy as np
 import numpy.typing as npt
 
 
-@dataclass
-class ApproachParameters:
-    ZeroEpsilon: float = 1e-5
-
 class Method(Enum):
     mean = 1
     median = 2
 
 
+@dataclass
+class ApproachParameters:
+    ZeroEpsilon: float = 1e-5
+    Method: "Method" = Method.median
+
+
 class ApproachBase(ABC):
 
-    def __init__(self):
+    def __init__(self, parameters: ApproachParameters):
+        self._zero_eps = parameters.ZeroEpsilon
+        self._method = parameters.Method
+
         self.logger = logging.getLogger(__name__)
         self._is_debug = self.logger.getEffectiveLevel() == 10
 
@@ -36,7 +41,7 @@ class ApproachBase(ABC):
         pass
 
     def calculate_scales(
-        self, custom_mv: npt.NDArray[np.float32], original_mv: npt.NDArray[np.float32], zero_eps: float, method: Method
+        self, custom_mv: npt.NDArray[np.float32], original_mv: npt.NDArray[np.float32]
     ) -> Tuple[float, float]:
         """
         Calculate the scale between custom and original motion vectors as the 'method' along each axis
@@ -48,16 +53,18 @@ class ApproachBase(ABC):
         :return: tuple contains 'scale_x' and 'scale_y'
         """
         
-        if method == Method.mean:
+        if self._method == Method.mean:
             calc_scale = lambda x: np.mean(x, dtype=np.float32)
 
-        elif method == Method.median:
+        elif self._method == Method.median:
             calc_scale = lambda x: np.median(x)
             
         else:
-            raise NotImplementedError(f'unknown method for scale calculation: {method}')
+            raise NotImplementedError(f'unknown method for scale calculation: {self._method}')
         
-        return self._calc_mv_scales(custom_mv, original_mv, zero_eps, calc_scale)
+        self.logger.debug(f'use "{self._method}" for the scale computation')
+        
+        return self._calc_mv_scales(custom_mv, original_mv, self._zero_eps, calc_scale)
     
     @staticmethod
     def _calc_mv_scales(

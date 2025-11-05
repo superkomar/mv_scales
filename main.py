@@ -5,14 +5,17 @@ import logging
 from enum import Enum
 
 from mv_scales_compute import __version__ as module_version
-from mv_scales_compute import ApproachBase
-from mv_scales_compute import Keypoints
-from mv_scales_compute import GradientDescent
+from mv_scales_compute import ApproachBase, Method
+from mv_scales_compute import Keypoints, KPParameters
+from mv_scales_compute import GradientDescent, GDParameters
 from mv_scales_compute import ExrUtils
 
 
 APPROACH_LIST = ['gradient', 'keypoints']
 LOG_LEVELS_LIST = ['info', 'debug']
+
+METHOD_LIST = [x.name for x in Method]
+METHOD_DEF = METHOD_LIST[0]
 
 
 class DatasetType(Enum):
@@ -82,6 +85,12 @@ def parse_arguments() -> argparse.Namespace:
         default=APPROACH_LIST[0]
     )
     runtime_group.add_argument(
+        '-method',
+        help='the method to compute the scales',
+        choices=METHOD_LIST,
+        default=METHOD_DEF
+    )
+    runtime_group.add_argument(
         '-log_level',
         help='logging level',
         choices=LOG_LEVELS_LIST,
@@ -119,12 +128,14 @@ def parse_arguments() -> argparse.Namespace:
 
     return args
 
-def get_approach(name: str) -> ApproachBase:
+def get_approach(name: str, method) -> ApproachBase:
     if name == APPROACH_LIST[0]:
-        return GradientDescent()
+        params = GDParameters(Method=Method[method])
+        return GradientDescent(params)
     
     elif name == APPROACH_LIST[1]:
-        return Keypoints()
+        params = KPParameters(Method=Method[method])
+        return Keypoints(params)
     
     else:
         raise RuntimeError(f'{name} is incorrect approach name')
@@ -225,7 +236,7 @@ if __name__ == '__main__':
     logger = logging.getLogger(__name__)
     logger.info(f'Use module version: {module_version}')
 
-    approach = get_approach(args.app)
+    approach = get_approach(args.app, args.method)
 
     for dataset in produce_datasets(args):
         result = calc_scales(dataset, approach)

@@ -36,7 +36,6 @@ class Detector(Enum):
 class KPParameters(ApproachParameters):
     MatchesThreshold: int = 50
     IsMovingBackward: bool = True
-    # ZeroEpsilon: float = 1e-5
     
     FactorForFrames: float = 0.7
     FactorForMv: float = 0.5
@@ -45,7 +44,7 @@ class KPParameters(ApproachParameters):
 class Keypoints(ApproachBase):
 
     def __init__(self, parameters: KPParameters = KPParameters()) -> None:
-        super().__init__()
+        super().__init__(parameters)
 
         self._matches_threshold = parameters.MatchesThreshold
         self._is_moving_backward = parameters.IsMovingBackward
@@ -301,7 +300,7 @@ class Keypoints(ApproachBase):
 
         #     self.logger.debug('')
 
-        return self.calculate_scales(custom_mv, original_mv, self._zero_eps, Method.median)
+        return self.calculate_scales(custom_mv, original_mv)
     
     @staticmethod
     def _get_detector(detector):
